@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>PDF Padder - 여백 추가</title>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 1.5em; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-top: 16px; }
+  label { display: block; margin: 10px 0 4px; font-size: 0.9em; }
+  input[type="number"] { width: 100px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; }
+  input[type="file"] { margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { margin-top: 16px; padding: 10px 18px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 1em; cursor: pointer; }
+  button:disabled { background: #999; cursor: not-allowed; }
+  #status { margin-top: 12px; font-size: 0.9em; color: #555; }
+  .unit { display: inline-block; margin-left: 6px; font-size: 0.85em; color: #666; }
+  select { padding: 6px; border-radius: 4px; border: 1px solid #ccc; }
+</style>
+</head>
+<body>
+  <h1>PDF Padder</h1>
+  <p>PDF의 각 페이지 외곽에 여백을 추가합니다. (페이지 크기가 커지고, 기존 콘텐츠는 중앙에 배치됩니다.)</p>
+
+  <div class="card">
+    <label>PDF 파일</label>
+    <input type="file" id="file" accept="application/pdf">
+
+    <label>단위
+      <select id="unit">
+        <option value="pt">pt (포인트)</option>
+        <option value="mm" selected>mm</option>
+        <option value="in">inch</option>
+      </select>
+    </label>
+
+    <div class="grid">
+      <div>
+        <label>위 (top)</label>
+        <input type="number" id="top" value="20" step="1">
+      </div>
+      <div>
+        <label>아래 (bottom)</label>
+        <input type="number" id="bottom" value="20" step="1">
+      </div>
+      <div>
+        <label>왼쪽 (left)</label>
+        <input type="number" id="left" value="20" step="1">
+      </div>
+      <div>
+        <label>오른쪽 (right)</label>
+        <input type="number" id="right" value="20" step="1">
+      </div>
+    </div>
+
+    <button id="go" disabled>여백 추가하여 다운로드</button>
+    <div id="status"></div>
+  </div>
+
+<script>
+const { PDFDocument } = PDFLib;
+const fileInput = document.getElementById('file');
+const goBtn = document.getElementById('go');
+const statusEl = document.getElementById('status');
+let pdfBytes = null;
+let originalName = 'output.pdf';
+
+fileInput.addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  pdfBytes = await f.arrayBuffer();
+  originalName = f.name.replace(/\.pdf$/i, '') + '-padded.pdf';
+  goBtn.disabled = false;
+  statusEl.textContent = `로드됨: ${f.name}`;
+});
+
+function toPt(value, unit) {
+  if (unit === 'mm') return value * 2.834645669;
+  if (unit === 'in') return value * 72;
+  return value;
+}
+
+goBtn.addEventListener('click', async () => {
+  if (!pdfBytes) return;
+  goBtn.disabled = true;
+  statusEl.textContent = '처리 중...';
+  try {
+    const unit = document.getElementById('unit').value;
+    const top = toPt(parseFloat(document.getElementById('top').value) || 0, unit);
+    const bottom = toPt(parseFloat(document.getElementById('bottom').value) || 0, unit);
+    const left = toPt(parseFloat(document.getElementById('left').value) || 0, unit);
+    const right = toPt(parseFloat(document.getElementById('right').value) || 0, unit);
+
+    const src = await PDFDocument.load(pdfBytes);
+    const out = await PDFDocument.create();
+    const pageCount = src.getPageCount();
+
+    for (let i = 0; i < pageCount; i++) {
+      const [embedded] = await out.embedPdf(pdfBytes, [i]);
+      const srcPage = src.getPage(i);
+      const { width: w, height: h } = srcPage.getSize();
+      const newW = w + left + right;
+      const newH = h + top + bottom;
+      const newPage = out.addPage([newW, newH]);
+      newPage.drawPage(embedded, {
+        x: left,
+        y: bottom,
+        width: w,
+        height: h,
+      });
+      statusEl.textContent = `처리 중... ${i + 1} / ${pageCount}`;
+    }
+
+    const bytes = await out.save();
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = originalName;
+    a.click();
+    URL.revokeObjectURL(url);
+    statusEl.textContent = '완료!';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '오류: ' + err.message;
+  } finally {
+    goBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
