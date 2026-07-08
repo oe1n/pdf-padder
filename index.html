@@ -157,12 +157,13 @@ document.getElementById('pad-go').addEventListener('click', async () => {
     const src = await PDFDocument.load(padState.bytes);
     const out = await PDFDocument.create();
     const pageCount = src.getPageCount();
+    // 모든 페이지를 한 번에 embed (반복 호출 시 매번 전체 PDF를 재파싱하는 것을 방지)
+    const embeds = await out.embedPdf(padState.bytes, [...Array(pageCount).keys()]);
 
     for (let i = 0; i < pageCount; i++) {
-      const [embedded] = await out.embedPdf(padState.bytes, [i]);
       const { width: w, height: h } = src.getPage(i).getSize();
       const newPage = out.addPage([w + left + right, h + top + bottom]);
-      newPage.drawPage(embedded, { x: left, y: bottom, width: w, height: h });
+      newPage.drawPage(embeds[i], { x: left, y: bottom, width: w, height: h });
       statusEl.textContent = `처리 중... ${i + 1} / ${pageCount}`;
     }
 
@@ -191,6 +192,8 @@ document.getElementById('merge2-go').addEventListener('click', async () => {
     const src = await PDFDocument.load(merge2State.bytes);
     const out = await PDFDocument.create();
     const pageCount = src.getPageCount();
+    // 모든 페이지를 한 번에 embed (반복 호출 시 매번 전체 PDF를 재파싱하는 것을 방지)
+    const embeds = await out.embedPdf(merge2State.bytes, [...Array(pageCount).keys()]);
 
     // 붙일 페이지 인덱스를 쌍으로 그룹화
     const groups = [];
@@ -205,27 +208,27 @@ document.getElementById('merge2-go').addEventListener('click', async () => {
 
     for (let g = 0; g < groups.length; g++) {
       const idxs = groups[g];
-      const embeds = await out.embedPdf(merge2State.bytes, idxs);
+      const pageEmbeds = idxs.map(i => embeds[i]);
       const sizes = idxs.map(i => src.getPage(i).getSize());
 
       if (idxs.length === 1) {
         // 단독 페이지: 원본 크기 그대로
         const { width: w, height: h } = sizes[0];
         const page = out.addPage([w, h]);
-        page.drawPage(embeds[0], { x: 0, y: 0, width: w, height: h });
+        page.drawPage(pageEmbeds[0], { x: 0, y: 0, width: w, height: h });
       } else {
         const totalW = sizes[0].width + sizes[1].width;
         const maxH = Math.max(sizes[0].height, sizes[1].height);
         const page = out.addPage([totalW, maxH]);
         // 왼쪽 페이지 (세로 중앙 정렬)
-        page.drawPage(embeds[0], {
+        page.drawPage(pageEmbeds[0], {
           x: 0,
           y: (maxH - sizes[0].height) / 2,
           width: sizes[0].width,
           height: sizes[0].height,
         });
         // 오른쪽 페이지
-        page.drawPage(embeds[1], {
+        page.drawPage(pageEmbeds[1], {
           x: sizes[0].width,
           y: (maxH - sizes[1].height) / 2,
           width: sizes[1].width,
