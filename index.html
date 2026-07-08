@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>PDF Padder - 여백 추가</title>
+<title>PDF Tools</title>
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
@@ -14,65 +14,96 @@
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   button { margin-top: 16px; padding: 10px 18px; background: #2563eb; color: white; border: none; border-radius: 6px; font-size: 1em; cursor: pointer; }
   button:disabled { background: #999; cursor: not-allowed; }
-  #status { margin-top: 12px; font-size: 0.9em; color: #555; }
+  .status { margin-top: 12px; font-size: 0.9em; color: #555; }
   .unit { display: inline-block; margin-left: 6px; font-size: 0.85em; color: #666; }
   select { padding: 6px; border-radius: 4px; border: 1px solid #ccc; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .checkbox-row label { margin: 0; }
+  .checkbox-row input { margin: 0; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid #ddd; margin-top: 20px; }
+  .tab { padding: 10px 16px; cursor: pointer; border: none; background: none; color: #666; font-size: 0.95em; margin: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; border-radius: 0; }
+  .tab:hover { color: #222; }
+  .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+  .panel { display: none; }
+  .panel.active { display: block; }
 </style>
 </head>
 <body>
-  <h1>PDF Padder</h1>
-  <p>PDF의 각 페이지 외곽에 여백을 추가합니다. (페이지 크기가 커지고, 기존 콘텐츠는 중앙에 배치됩니다.)</p>
+  <h1>PDF Tools</h1>
 
-  <div class="card">
-    <label>PDF 파일</label>
-    <input type="file" id="file" accept="application/pdf">
+  <div class="tabs">
+    <button class="tab active" data-tab="pad">여백 추가</button>
+    <button class="tab" data-tab="merge2">2페이지 가로로 붙이기</button>
+  </div>
 
-    <label>단위
-      <select id="unit">
-        <option value="pt">pt (포인트)</option>
-        <option value="mm" selected>mm</option>
-        <option value="in">inch</option>
-      </select>
-    </label>
+  <!-- ===== 여백 추가 ===== -->
+  <div class="panel active" id="panel-pad">
+    <p>PDF의 각 페이지 외곽에 여백을 추가합니다. (페이지 크기가 커지고, 기존 콘텐츠는 중앙에 배치됩니다.)</p>
+    <div class="card">
+      <label>PDF 파일</label>
+      <input type="file" id="pad-file" accept="application/pdf">
 
-    <div class="grid">
-      <div>
-        <label>위 (top)</label>
-        <input type="number" id="top" value="20" step="1">
+      <label>단위
+        <select id="pad-unit">
+          <option value="pt">pt (포인트)</option>
+          <option value="mm" selected>mm</option>
+          <option value="in">inch</option>
+        </select>
+      </label>
+
+      <div class="grid">
+        <div>
+          <label>위 (top)</label>
+          <input type="number" id="pad-top" value="20" step="1">
+        </div>
+        <div>
+          <label>아래 (bottom)</label>
+          <input type="number" id="pad-bottom" value="20" step="1">
+        </div>
+        <div>
+          <label>왼쪽 (left)</label>
+          <input type="number" id="pad-left" value="20" step="1">
+        </div>
+        <div>
+          <label>오른쪽 (right)</label>
+          <input type="number" id="pad-right" value="20" step="1">
+        </div>
       </div>
-      <div>
-        <label>아래 (bottom)</label>
-        <input type="number" id="bottom" value="20" step="1">
-      </div>
-      <div>
-        <label>왼쪽 (left)</label>
-        <input type="number" id="left" value="20" step="1">
-      </div>
-      <div>
-        <label>오른쪽 (right)</label>
-        <input type="number" id="right" value="20" step="1">
-      </div>
+
+      <button id="pad-go" disabled>여백 추가하여 다운로드</button>
+      <div class="status" id="pad-status"></div>
     </div>
+  </div>
 
-    <button id="go" disabled>여백 추가하여 다운로드</button>
-    <div id="status"></div>
+  <!-- ===== 2페이지 가로로 붙이기 ===== -->
+  <div class="panel" id="panel-merge2">
+    <p>2개의 페이지를 가로로 나란히 붙여 한 페이지로 만듭니다. (새 페이지 너비는 두 페이지의 합, 높이는 둘 중 큰 값입니다.)</p>
+    <div class="card">
+      <label>PDF 파일</label>
+      <input type="file" id="merge2-file" accept="application/pdf">
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="merge2-firstalone">
+        <label for="merge2-firstalone">첫번째 페이지만 혼자 두기</label>
+      </div>
+
+      <button id="merge2-go" disabled>가로로 붙여서 다운로드</button>
+      <div class="status" id="merge2-status"></div>
+    </div>
   </div>
 
 <script>
 const { PDFDocument } = PDFLib;
-const fileInput = document.getElementById('file');
-const goBtn = document.getElementById('go');
-const statusEl = document.getElementById('status');
-let pdfBytes = null;
-let originalName = 'output.pdf';
 
-fileInput.addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  pdfBytes = await f.arrayBuffer();
-  originalName = f.name.replace(/\.pdf$/i, '') + '-padded.pdf';
-  goBtn.disabled = false;
-  statusEl.textContent = `로드됨: ${f.name}`;
+// ----- 탭 전환 -----
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
 });
 
 function toPt(value, unit) {
@@ -81,51 +112,136 @@ function toPt(value, unit) {
   return value;
 }
 
-goBtn.addEventListener('click', async () => {
-  if (!pdfBytes) return;
-  goBtn.disabled = true;
+function download(bytes, name) {
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 파일 선택 헬퍼: 선택 시 바이트/이름 저장 후 버튼 활성화
+function bindFile(fileId, btnId, statusId, suffix, state) {
+  const fileInput = document.getElementById(fileId);
+  const btn = document.getElementById(btnId);
+  const statusEl = document.getElementById(statusId);
+  fileInput.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    state.bytes = await f.arrayBuffer();
+    state.name = f.name.replace(/\.pdf$/i, '') + suffix + '.pdf';
+    btn.disabled = false;
+    statusEl.textContent = `로드됨: ${f.name}`;
+  });
+}
+
+// ===== 여백 추가 =====
+const padState = {};
+bindFile('pad-file', 'pad-go', 'pad-status', '-padded', padState);
+
+document.getElementById('pad-go').addEventListener('click', async () => {
+  if (!padState.bytes) return;
+  const btn = document.getElementById('pad-go');
+  const statusEl = document.getElementById('pad-status');
+  btn.disabled = true;
   statusEl.textContent = '처리 중...';
   try {
-    const unit = document.getElementById('unit').value;
-    const top = toPt(parseFloat(document.getElementById('top').value) || 0, unit);
-    const bottom = toPt(parseFloat(document.getElementById('bottom').value) || 0, unit);
-    const left = toPt(parseFloat(document.getElementById('left').value) || 0, unit);
-    const right = toPt(parseFloat(document.getElementById('right').value) || 0, unit);
+    const unit = document.getElementById('pad-unit').value;
+    const top = toPt(parseFloat(document.getElementById('pad-top').value) || 0, unit);
+    const bottom = toPt(parseFloat(document.getElementById('pad-bottom').value) || 0, unit);
+    const left = toPt(parseFloat(document.getElementById('pad-left').value) || 0, unit);
+    const right = toPt(parseFloat(document.getElementById('pad-right').value) || 0, unit);
 
-    const src = await PDFDocument.load(pdfBytes);
+    const src = await PDFDocument.load(padState.bytes);
     const out = await PDFDocument.create();
     const pageCount = src.getPageCount();
 
     for (let i = 0; i < pageCount; i++) {
-      const [embedded] = await out.embedPdf(pdfBytes, [i]);
-      const srcPage = src.getPage(i);
-      const { width: w, height: h } = srcPage.getSize();
-      const newW = w + left + right;
-      const newH = h + top + bottom;
-      const newPage = out.addPage([newW, newH]);
-      newPage.drawPage(embedded, {
-        x: left,
-        y: bottom,
-        width: w,
-        height: h,
-      });
+      const [embedded] = await out.embedPdf(padState.bytes, [i]);
+      const { width: w, height: h } = src.getPage(i).getSize();
+      const newPage = out.addPage([w + left + right, h + top + bottom]);
+      newPage.drawPage(embedded, { x: left, y: bottom, width: w, height: h });
       statusEl.textContent = `처리 중... ${i + 1} / ${pageCount}`;
     }
 
-    const bytes = await out.save();
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = originalName;
-    a.click();
-    URL.revokeObjectURL(url);
+    download(await out.save(), padState.name);
     statusEl.textContent = '완료!';
   } catch (err) {
     console.error(err);
     statusEl.textContent = '오류: ' + err.message;
   } finally {
-    goBtn.disabled = false;
+    btn.disabled = false;
+  }
+});
+
+// ===== 2페이지 가로로 붙이기 =====
+const merge2State = {};
+bindFile('merge2-file', 'merge2-go', 'merge2-status', '-2up', merge2State);
+
+document.getElementById('merge2-go').addEventListener('click', async () => {
+  if (!merge2State.bytes) return;
+  const btn = document.getElementById('merge2-go');
+  const statusEl = document.getElementById('merge2-status');
+  btn.disabled = true;
+  statusEl.textContent = '처리 중...';
+  try {
+    const firstAlone = document.getElementById('merge2-firstalone').checked;
+    const src = await PDFDocument.load(merge2State.bytes);
+    const out = await PDFDocument.create();
+    const pageCount = src.getPageCount();
+
+    // 붙일 페이지 인덱스를 쌍으로 그룹화
+    const groups = [];
+    let start = 0;
+    if (firstAlone && pageCount > 0) {
+      groups.push([0]);
+      start = 1;
+    }
+    for (let i = start; i < pageCount; i += 2) {
+      groups.push(i + 1 < pageCount ? [i, i + 1] : [i]);
+    }
+
+    for (let g = 0; g < groups.length; g++) {
+      const idxs = groups[g];
+      const embeds = await out.embedPdf(merge2State.bytes, idxs);
+      const sizes = idxs.map(i => src.getPage(i).getSize());
+
+      if (idxs.length === 1) {
+        // 단독 페이지: 원본 크기 그대로
+        const { width: w, height: h } = sizes[0];
+        const page = out.addPage([w, h]);
+        page.drawPage(embeds[0], { x: 0, y: 0, width: w, height: h });
+      } else {
+        const totalW = sizes[0].width + sizes[1].width;
+        const maxH = Math.max(sizes[0].height, sizes[1].height);
+        const page = out.addPage([totalW, maxH]);
+        // 왼쪽 페이지 (세로 중앙 정렬)
+        page.drawPage(embeds[0], {
+          x: 0,
+          y: (maxH - sizes[0].height) / 2,
+          width: sizes[0].width,
+          height: sizes[0].height,
+        });
+        // 오른쪽 페이지
+        page.drawPage(embeds[1], {
+          x: sizes[0].width,
+          y: (maxH - sizes[1].height) / 2,
+          width: sizes[1].width,
+          height: sizes[1].height,
+        });
+      }
+      statusEl.textContent = `처리 중... ${g + 1} / ${groups.length}`;
+    }
+
+    download(await out.save(), merge2State.name);
+    statusEl.textContent = '완료!';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '오류: ' + err.message;
+  } finally {
+    btn.disabled = false;
   }
 });
 </script>
