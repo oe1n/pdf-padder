@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <title>PDF Tools</title>
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; color: #222; }
   h1 { font-size: 1.5em; }
@@ -38,6 +40,8 @@
     <button class="tab active" data-tab="pad">여백 추가</button>
     <button class="tab" data-tab="merge2">2페이지 가로로 붙이기</button>
     <button class="tab" data-tab="img2pdf">이미지 → PDF</button>
+    <button class="tab" data-tab="mergepdf">PDF 합치기</button>
+    <button class="tab" data-tab="pdf2img">PDF → 이미지 ZIP</button>
   </div>
 
   <!-- ===== 여백 추가 ===== -->
@@ -119,6 +123,54 @@
     </div>
   </div>
 
+  <!-- ===== PDF 합치기 ===== -->
+  <div class="panel" id="panel-mergepdf">
+    <p>여러 PDF 파일을 순서대로 이어붙여 하나의 PDF로 만듭니다. (각 페이지의 원래 크기는 그대로 유지됩니다.)</p>
+    <div class="card">
+      <label>PDF 파일 (여러 개 선택 가능)</label>
+      <input type="file" id="merge-file" accept="application/pdf" multiple>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="merge-sortname" checked>
+        <label for="merge-sortname">파일 이름 순으로 정렬</label>
+      </div>
+
+      <ol class="filelist" id="merge-list"></ol>
+
+      <button id="merge-go" disabled>합쳐서 다운로드</button>
+      <div class="status" id="merge-status"></div>
+    </div>
+  </div>
+
+  <!-- ===== PDF -> 이미지 ZIP ===== -->
+  <div class="panel" id="panel-pdf2img">
+    <p>PDF의 각 페이지를 이미지로 변환해 ZIP 파일로 내려받습니다.</p>
+    <div class="card">
+      <label>PDF 파일</label>
+      <input type="file" id="p2i-file" accept="application/pdf">
+
+      <label>해상도 (DPI) — 높을수록 선명하지만 느리고 용량이 큽니다
+        <input type="number" id="p2i-dpi" value="150" min="1" step="1">
+      </label>
+
+      <label>이미지 형식
+        <select id="p2i-format">
+          <option value="image/png" selected>PNG (무손실)</option>
+          <option value="image/jpeg">JPEG (용량 작음)</option>
+        </select>
+      </label>
+
+      <div id="p2i-quality-row">
+        <label>JPEG 품질 (0.1 ~ 1.0)
+          <input type="number" id="p2i-quality" value="0.9" min="0.1" max="1" step="0.05">
+        </label>
+      </div>
+
+      <button id="p2i-go" disabled>이미지 ZIP으로 다운로드</button>
+      <div class="status" id="p2i-status"></div>
+    </div>
+  </div>
+
 <script>
 const { PDFDocument } = PDFLib;
 
@@ -138,8 +190,8 @@ function toPt(value, unit) {
   return value;
 }
 
-function download(bytes, name) {
-  const blob = new Blob([bytes], { type: 'application/pdf' });
+function download(data, name, mime = 'application/pdf') {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -274,44 +326,45 @@ document.getElementById('merge2-go').addEventListener('click', async () => {
   }
 });
 
-// ===== 이미지 → PDF =====
-const imgState = { files: [], picked: [] };
-
+// 여러 파일 선택 헬퍼: 이름순(자연 정렬) 토글 + 선택 목록 표시
 function naturalCompare(a, b) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function renderImgList() {
-  const listEl = document.getElementById('img-list');
-  listEl.innerHTML = '';
-  for (const f of imgState.files) {
-    const li = document.createElement('li');
-    li.textContent = f.name;
-    listEl.appendChild(li);
-  }
+function bindMultiFile({ fileId, sortId, listId, btnId, statusId, label }) {
+  const state = { files: [], picked: [] };
+  const listEl = document.getElementById(listId);
+  const btn = document.getElementById(btnId);
+  const statusEl = document.getElementById(statusId);
+
+  const apply = () => {
+    state.files = state.picked.slice();
+    if (document.getElementById(sortId).checked) {
+      state.files.sort((a, b) => naturalCompare(a.name, b.name));
+    }
+    listEl.innerHTML = '';
+    for (const f of state.files) {
+      const li = document.createElement('li');
+      li.textContent = f.name;
+      listEl.appendChild(li);
+    }
+  };
+
+  document.getElementById(fileId).addEventListener('change', (e) => {
+    state.picked = Array.from(e.target.files);
+    apply();
+    btn.disabled = state.files.length === 0;
+    statusEl.textContent = state.files.length ? `${state.files.length}개의 ${label}이(가) 선택되었습니다.` : '';
+  });
+  document.getElementById(sortId).addEventListener('change', apply);
+
+  return state;
 }
 
-function sortImgFiles() {
-  if (document.getElementById('img-sortname').checked) {
-    imgState.files.sort((a, b) => naturalCompare(a.name, b.name));
-  } else {
-    imgState.files = imgState.picked.slice();
-  }
-}
-
-document.getElementById('img-file').addEventListener('change', (e) => {
-  imgState.picked = Array.from(e.target.files);
-  imgState.files = imgState.picked.slice();
-  sortImgFiles();
-  renderImgList();
-  document.getElementById('img-go').disabled = imgState.files.length === 0;
-  document.getElementById('img-status').textContent =
-    imgState.files.length ? `${imgState.files.length}개의 이미지가 선택되었습니다.` : '';
-});
-
-document.getElementById('img-sortname').addEventListener('change', () => {
-  sortImgFiles();
-  renderImgList();
+// ===== 이미지 → PDF =====
+const imgState = bindMultiFile({
+  fileId: 'img-file', sortId: 'img-sortname', listId: 'img-list',
+  btnId: 'img-go', statusId: 'img-status', label: '이미지',
 });
 
 // 매직 넘버로 PNG / JPEG 판별 (확장자나 MIME 타입이 틀린 경우에도 동작)
@@ -393,6 +446,135 @@ document.getElementById('img-go').addEventListener('click', async () => {
     statusEl.textContent = failed.length
       ? `완료! (건너뛴 파일 ${failed.length}개: ${failed.join(', ')})`
       : '완료!';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '오류: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ===== PDF 합치기 =====
+const mergeState = bindMultiFile({
+  fileId: 'merge-file', sortId: 'merge-sortname', listId: 'merge-list',
+  btnId: 'merge-go', statusId: 'merge-status', label: 'PDF',
+});
+
+document.getElementById('merge-go').addEventListener('click', async () => {
+  if (!mergeState.files.length) return;
+  const btn = document.getElementById('merge-go');
+  const statusEl = document.getElementById('merge-status');
+  btn.disabled = true;
+  statusEl.textContent = '처리 중...';
+  try {
+    const out = await PDFDocument.create();
+    const failed = [];
+    let totalPages = 0;
+
+    for (let i = 0; i < mergeState.files.length; i++) {
+      const file = mergeState.files[i];
+      statusEl.textContent = `처리 중... ${i + 1} / ${mergeState.files.length} (${file.name})`;
+      try {
+        const src = await PDFDocument.load(await file.arrayBuffer());
+        // copyPages는 페이지 크기/회전 등 원본 속성을 그대로 가져온다
+        const pages = await out.copyPages(src, src.getPageIndices());
+        for (const page of pages) out.addPage(page);
+        totalPages += pages.length;
+      } catch (err) {
+        console.error(file.name, err);
+        failed.push(file.name);
+      }
+    }
+
+    if (out.getPageCount() === 0) throw new Error('합칠 수 있는 PDF가 없습니다');
+
+    const base = mergeState.files[0].name.replace(/\.pdf$/i, '');
+    download(await out.save(), base + '-merged.pdf');
+    statusEl.textContent = failed.length
+      ? `완료! (${totalPages}페이지, 건너뛴 파일 ${failed.length}개: ${failed.join(', ')})`
+      : `완료! (총 ${totalPages}페이지)`;
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '오류: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ===== PDF → 이미지 ZIP =====
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
+
+const p2iState = {};
+bindFile('p2i-file', 'p2i-go', 'p2i-status', '', p2iState);
+
+// JPEG를 고를 때만 품질 입력을 보여준다
+const p2iFormat = document.getElementById('p2i-format');
+const p2iQualityRow = document.getElementById('p2i-quality-row');
+const syncQualityRow = () => {
+  p2iQualityRow.style.display = p2iFormat.value === 'image/jpeg' ? '' : 'none';
+};
+p2iFormat.addEventListener('change', syncQualityRow);
+syncQualityRow();
+
+function canvasToBlob(canvas, mime, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('이미지 변환에 실패했습니다'))),
+      mime,
+      mime === 'image/jpeg' ? quality : undefined,
+    );
+  });
+}
+
+document.getElementById('p2i-go').addEventListener('click', async () => {
+  if (!p2iState.bytes) return;
+  const btn = document.getElementById('p2i-go');
+  const statusEl = document.getElementById('p2i-status');
+  btn.disabled = true;
+  statusEl.textContent = '처리 중...';
+  try {
+    if (!window.pdfjsLib) throw new Error('pdf.js를 불러오지 못했습니다');
+    if (!window.JSZip) throw new Error('JSZip을 불러오지 못했습니다');
+
+    const dpi = parseFloat(document.getElementById('p2i-dpi').value) || 150;
+    const mime = p2iFormat.value;
+    const ext = mime === 'image/jpeg' ? 'jpg' : 'png';
+    let quality = parseFloat(document.getElementById('p2i-quality').value);
+    if (!(quality > 0 && quality <= 1)) quality = 0.9;
+    const scale = dpi / 72; // pdf.js 기본 뷰포트는 72 DPI 기준
+
+    // getDocument는 전달한 버퍼를 detach 하므로 복사본을 넘긴다
+    const pdf = await pdfjsLib.getDocument({ data: p2iState.bytes.slice(0) }).promise;
+    const zip = new JSZip();
+    const pad = String(pdf.numPages).length;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      statusEl.textContent = `처리 중... ${i} / ${pdf.numPages} 페이지`;
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale });
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      // JPEG는 투명도를 지원하지 않으므로 흰 배경을 깔아준다
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      page.cleanup();
+      const blob = await canvasToBlob(canvas, mime, quality);
+      zip.file(`page-${String(i).padStart(pad, '0')}.${ext}`, blob);
+    }
+
+    statusEl.textContent = 'ZIP 파일 생성 중...';
+    // 이미지가 이미 압축되어 있으므로 STORE가 훨씬 빠르고 크기 차이도 거의 없다
+    const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+    const base = p2iState.name.replace(/\.pdf$/i, '');
+    download(zipBlob, base + '-images.zip', 'application/zip');
+    statusEl.textContent = `완료! (${pdf.numPages}개의 이미지)`;
   } catch (err) {
     console.error(err);
     statusEl.textContent = '오류: ' + err.message;
