@@ -25,6 +25,8 @@
   .tab { padding: 10px 16px; cursor: pointer; border: none; background: none; color: #666; font-size: 0.95em; margin: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; border-radius: 0; }
   .tab:hover { color: #222; }
   .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+  .filelist { margin: 12px 0 0; padding-left: 22px; font-size: 0.85em; color: #555; max-height: 180px; overflow-y: auto; }
+  .filelist li { margin: 2px 0; }
   .panel { display: none; }
   .panel.active { display: block; }
 </style>
@@ -35,6 +37,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="pad">여백 추가</button>
     <button class="tab" data-tab="merge2">2페이지 가로로 붙이기</button>
+    <button class="tab" data-tab="img2pdf">이미지 → PDF</button>
   </div>
 
   <!-- ===== 여백 추가 ===== -->
@@ -90,6 +93,29 @@
 
       <button id="merge2-go" disabled>가로로 붙여서 다운로드</button>
       <div class="status" id="merge2-status"></div>
+    </div>
+  </div>
+
+  <!-- ===== 이미지 → PDF ===== -->
+  <div class="panel" id="panel-img2pdf">
+    <p>여러 이미지를 하나의 PDF로 만듭니다. (각 페이지는 해당 이미지 크기에 맞춰 생성됩니다.)</p>
+    <div class="card">
+      <label>이미지 파일 (여러 개 선택 가능)</label>
+      <input type="file" id="img-file" accept="image/*" multiple>
+
+      <label>해상도 (DPI) — 이미지 픽셀을 페이지 크기로 환산할 때 사용
+        <input type="number" id="img-dpi" value="72" min="1" step="1">
+      </label>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="img-sortname" checked>
+        <label for="img-sortname">파일 이름 순으로 정렬</label>
+      </div>
+
+      <ol class="filelist" id="img-list"></ol>
+
+      <button id="img-go" disabled>PDF로 만들어 다운로드</button>
+      <div class="status" id="img-status"></div>
     </div>
   </div>
 
@@ -240,6 +266,133 @@ document.getElementById('merge2-go').addEventListener('click', async () => {
 
     download(await out.save(), merge2State.name);
     statusEl.textContent = '완료!';
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = '오류: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ===== 이미지 → PDF =====
+const imgState = { files: [], picked: [] };
+
+function naturalCompare(a, b) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function renderImgList() {
+  const listEl = document.getElementById('img-list');
+  listEl.innerHTML = '';
+  for (const f of imgState.files) {
+    const li = document.createElement('li');
+    li.textContent = f.name;
+    listEl.appendChild(li);
+  }
+}
+
+function sortImgFiles() {
+  if (document.getElementById('img-sortname').checked) {
+    imgState.files.sort((a, b) => naturalCompare(a.name, b.name));
+  } else {
+    imgState.files = imgState.picked.slice();
+  }
+}
+
+document.getElementById('img-file').addEventListener('change', (e) => {
+  imgState.picked = Array.from(e.target.files);
+  imgState.files = imgState.picked.slice();
+  sortImgFiles();
+  renderImgList();
+  document.getElementById('img-go').disabled = imgState.files.length === 0;
+  document.getElementById('img-status').textContent =
+    imgState.files.length ? `${imgState.files.length}개의 이미지가 선택되었습니다.` : '';
+});
+
+document.getElementById('img-sortname').addEventListener('change', () => {
+  sortImgFiles();
+  renderImgList();
+});
+
+// 매직 넘버로 PNG / JPEG 판별 (확장자나 MIME 타입이 틀린 경우에도 동작)
+function sniffType(bytes) {
+  const b = new Uint8Array(bytes);
+  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  return null;
+}
+
+// pdf-lib이 직접 지원하지 않는 형식(webp, gif, bmp, svg 등)은 캔버스로 PNG 변환
+function toPngViaCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        if (!canvas.width || !canvas.height) throw new Error('이미지 크기를 알 수 없습니다');
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        canvas.toBlob(async (blob) => {
+          URL.revokeObjectURL(url);
+          if (!blob) return reject(new Error('PNG 변환에 실패했습니다'));
+          resolve(await blob.arrayBuffer());
+        }, 'image/png');
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('이미지를 읽을 수 없습니다'));
+    };
+    img.src = url;
+  });
+}
+
+document.getElementById('img-go').addEventListener('click', async () => {
+  if (!imgState.files.length) return;
+  const btn = document.getElementById('img-go');
+  const statusEl = document.getElementById('img-status');
+  btn.disabled = true;
+  statusEl.textContent = '처리 중...';
+  try {
+    const dpi = parseFloat(document.getElementById('img-dpi').value) || 72;
+    const scale = 72 / dpi; // 픽셀 -> 포인트
+    const out = await PDFDocument.create();
+    const failed = [];
+
+    for (let i = 0; i < imgState.files.length; i++) {
+      const file = imgState.files[i];
+      statusEl.textContent = `처리 중... ${i + 1} / ${imgState.files.length} (${file.name})`;
+      try {
+        let bytes = await file.arrayBuffer();
+        let type = sniffType(bytes);
+        if (!type) {
+          bytes = await toPngViaCanvas(file);
+          type = 'png';
+        }
+        const image = type === 'png' ? await out.embedPng(bytes) : await out.embedJpg(bytes);
+        const w = image.width * scale;
+        const h = image.height * scale;
+        // 각 이미지 크기에 딱 맞는 페이지를 만들어 이미지를 가득 채운다
+        const page = out.addPage([w, h]);
+        page.drawImage(image, { x: 0, y: 0, width: w, height: h });
+      } catch (err) {
+        console.error(file.name, err);
+        failed.push(file.name);
+      }
+    }
+
+    if (out.getPageCount() === 0) throw new Error('변환할 수 있는 이미지가 없습니다');
+
+    const base = imgState.files[0].name.replace(/\.[^.]+$/, '');
+    download(await out.save(), base + '-images.pdf');
+    statusEl.textContent = failed.length
+      ? `완료! (건너뛴 파일 ${failed.length}개: ${failed.join(', ')})`
+      : '완료!';
   } catch (err) {
     console.error(err);
     statusEl.textContent = '오류: ' + err.message;
